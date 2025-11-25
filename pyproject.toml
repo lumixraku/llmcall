@@ -1,0 +1,14 @@
+[project]
+name = "api_test"
+version = "0.1.0"
+description = "Testing various AI API integrations"
+readme = "README.md"
+requires-python = ">=3.9,<3.12"
+dependencies = [
+    "pillow>=10.0.0",
+    "python-dotenv>=1.0.0",
+]
+
+[build-system]
+requires = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"
