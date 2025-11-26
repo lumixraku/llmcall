@@ -1,6 +1,10 @@
 import base64
 import os
 from openai import OpenAI
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 # 使用中转站
 sonetto_api_key = os.getenv("SONETTO_API_KEY")
@@ -23,7 +27,7 @@ def load_image_as_base64(image_path):
 image_data = load_image_as_base64("assets/two.png")
 
 response = client.chat.completions.create(
-    model="[Q]gemini-3-pro-preview-aistudio-6",  # 对方中转站支持的模型名
+    model="gemini-3-pro-image-preview-16",  # 对方中转站支持的模型名
     messages=[
         {
             "role": "user",

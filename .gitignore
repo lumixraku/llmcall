@@ -40,4 +40,4 @@ env/
 Thumbs.db
 
 # Generated files
-weather_tokyo.png
+assets/output
