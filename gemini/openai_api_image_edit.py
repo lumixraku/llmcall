@@ -1,4 +1,7 @@
 # https://ai.google.dev/gemini-api/docs/image-generation
+# 地址api端口：https://vip.sonetto.top/v1
+# https://docs.qq.com/sheet/DS1dTa0dZdVpnbnRr?tab=BB08J2
+
 import base64
 import os
 import re
