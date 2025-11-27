@@ -5,7 +5,6 @@ import (
 	"encoding/base64"
 	"fmt"
 	"os"
-	"path/filepath"
 	"regexp"
 
 	"github.com/joho/godotenv"
@@ -13,14 +12,20 @@ import (
 	"github.com/openai/openai-go/option"
 )
 
-func ImageEdit() {
+// ImageEditResult represents the result of an image edit operation
+type ImageEditResult struct {
+	Format string // Image format (e.g., "png", "jpeg")
+	Data   []byte // Decoded image data
+}
+
+// ImageEdit takes a base64 encoded image string and a prompt, returns edited images
+func ImageEdit(imageBase64 string, prompt string) ([]ImageEditResult, error) {
 	// Load .env file from current directory
 	_ = godotenv.Load()
 
 	apiKey := os.Getenv("SONETTO_API_KEY")
 	if apiKey == "" {
-		fmt.Println("SONETTO_API_KEY is not set in the environment")
-		os.Exit(1)
+		return nil, fmt.Errorf("SONETTO_API_KEY is not set in the environment")
 	}
 
 	// Create OpenAI client with custom base URL
@@ -28,13 +33,6 @@ func ImageEdit() {
 		option.WithAPIKey(apiKey),
 		option.WithBaseURL("https://vip.sonetto.top/v1"),
 	)
-
-	// Load image as base64
-	imageData, err := loadImageAsBase64("assets/two.png")
-	if err != nil {
-		fmt.Printf("Failed to load image: %v\n", err)
-		os.Exit(1)
-	}
 
 	// Create chat completion request with image
 	ctx := context.Background()
@@ -45,27 +43,25 @@ func ImageEdit() {
 				{
 					OfImageURL: &openai.ChatCompletionContentPartImageParam{
 						ImageURL: openai.ChatCompletionContentPartImageImageURLParam{
-							URL: fmt.Sprintf("data:image/png;base64,%s", imageData),
+							URL: fmt.Sprintf("data:image/png;base64,%s", imageBase64),
 						},
 					},
 				},
 				{
 					OfText: &openai.ChatCompletionContentPartTextParam{
-						Text: "Japanese Animate Style",
+						Text: prompt,
 					},
 				},
 			}),
 		},
 	})
 	if err != nil {
-		fmt.Printf("API request failed: %v\n", err)
-		os.Exit(1)
+		return nil, fmt.Errorf("API request failed: %w", err)
 	}
 
 	// Process response
 	if len(resp.Choices) == 0 {
-		fmt.Println("No response choices returned")
-		os.Exit(1)
+		return nil, fmt.Errorf("no response choices returned")
 	}
 
 	content := resp.Choices[0].Message.Content
@@ -74,38 +70,35 @@ func ImageEdit() {
 	pattern := regexp.MustCompile(`!\[.*?\]\(data:image/(\w+);base64,([A-Za-z0-9+/=]+)\)`)
 	matches := pattern.FindAllStringSubmatch(content, -1)
 
-	if len(matches) > 0 {
-		for idx, match := range matches {
-			imgFormat := match[1]
-			b64Data := match[2]
-
-			imageBytes, err := base64.StdEncoding.DecodeString(b64Data)
-			if err != nil {
-				fmt.Printf("Failed to decode base64 image %d: %v\n", idx, err)
-				continue
-			}
-
-			outputPath := filepath.Join("assets", "output", fmt.Sprintf("edited_%d.%s", idx, imgFormat))
-			// Ensure output directory exists
-			if err := os.MkdirAll(filepath.Dir(outputPath), 0755); err != nil {
-				fmt.Printf("Failed to create output directory: %v\n", err)
-				continue
-			}
-
-			if err := os.WriteFile(outputPath, imageBytes, 0644); err != nil {
-				fmt.Printf("Failed to save image %d: %v\n", idx, err)
-				continue
-			}
-			fmt.Printf("编辑后的图片已保存到: %s\n", outputPath)
-		}
-	} else {
-		// Print raw content if no image found
-		if len(content) > 200 {
-			fmt.Printf("未能解析图片数据: %s...\n", content[:200])
-		} else {
-			fmt.Printf("未能解析图片数据: %s\n", content)
-		}
+	if len(matches) == 0 {
+		return nil, fmt.Errorf("no image found in response: %s", truncateString(content, 200))
 	}
+
+	var results []ImageEditResult
+	for idx, match := range matches {
+		imgFormat := match[1]
+		b64Data := match[2]
+
+		imageBytes, err := base64.StdEncoding.DecodeString(b64Data)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decode base64 image %d: %w", idx, err)
+		}
+
+		results = append(results, ImageEditResult{
+			Format: imgFormat,
+			Data:   imageBytes,
+		})
+	}
+
+	return results, nil
+}
+
+// truncateString truncates a string to maxLen characters
+func truncateString(s string, maxLen int) string {
+	if len(s) > maxLen {
+		return s[:maxLen] + "..."
+	}
+	return s
 }
 
 // loadImageAsBase64 loads an image file and returns its base64 encoded string

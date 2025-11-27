@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Image Edit - AI 图像编辑</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .drop-zone {
+            border: 2px dashed #cbd5e1;
+            transition: all 0.3s ease;
+        }
+        .drop-zone:hover, .drop-zone.dragover {
+            border-color: #3b82f6;
+            background-color: #eff6ff;
+        }
+        .loading {
+            animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+    <div class="container mx-auto px-4 py-8 max-w-4xl">
+        <header class="text-center mb-8">
+            <h1 class="text-3xl font-bold text-gray-800 mb-2">AI 图像编辑</h1>
+            <p class="text-gray-600">上传图片，输入提示词，让 AI 帮你编辑图像</p>
+        </header>
+
+        <div class="bg-white rounded-xl shadow-lg p-6 mb-6">
+            <!-- Image Upload Area -->
+            <div class="mb-6">
+                <label class="block text-sm font-medium text-gray-700 mb-2">上传图片</label>
+                <div id="dropZone" class="drop-zone rounded-lg p-8 text-center cursor-pointer">
+                    <div id="uploadPlaceholder">
+                        <svg class="mx-auto h-12 w-12 text-gray-400" stroke="currentColor" fill="none" viewBox="0 0 48 48">
+                            <path d="M28 8H12a4 4 0 00-4 4v20m32-12v8m0 0v8a4 4 0 01-4 4H12a4 4 0 01-4-4v-4m32-4l-3.172-3.172a4 4 0 00-5.656 0L28 28M8 32l9.172-9.172a4 4 0 015.656 0L28 28m0 0l4 4m4-24h8m-4-4v8m-12 4h.02" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                        </svg>
+                        <p class="mt-2 text-sm text-gray-600">点击或拖拽图片到此处</p>
+                        <p class="mt-1 text-xs text-gray-500">支持 PNG, JPG, JPEG, GIF</p>
+                    </div>
+                    <img id="previewImage" class="hidden max-h-64 mx-auto rounded-lg" alt="Preview">
+                </div>
+                <input type="file" id="fileInput" accept="image/*" class="hidden">
+            </div>
+
+            <!-- Prompt Input -->
+            <div class="mb-6">
+                <label for="prompt" class="block text-sm font-medium text-gray-700 mb-2">编辑提示词</label>
+                <textarea
+                    id="prompt"
+                    rows="3"
+                    class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
+                    placeholder="描述你想要的编辑效果，例如：将背景改为海滩、添加一只猫、把图片变成卡通风格..."
+                ></textarea>
+            </div>
+
+            <!-- Submit Button -->
+            <button
+                id="submitBtn"
+                class="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-3 px-6 rounded-lg transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed"
+                disabled
+            >
+                开始编辑
+            </button>
+        </div>
+
+        <!-- Loading State -->
+        <div id="loadingState" class="hidden bg-white rounded-xl shadow-lg p-8 text-center mb-6">
+            <div class="loading">
+                <svg class="mx-auto h-12 w-12 text-blue-600" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                <p class="mt-4 text-gray-600">AI 正在处理您的图片，请稍候...</p>
+            </div>
+        </div>
+
+        <!-- Error State -->
+        <div id="errorState" class="hidden bg-red-50 border border-red-200 rounded-xl p-6 mb-6">
+            <div class="flex items-center">
+                <svg class="h-6 w-6 text-red-500 mr-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <p id="errorMessage" class="text-red-700"></p>
+            </div>
+        </div>
+
+        <!-- Results -->
+        <div id="resultsSection" class="hidden">
+            <h2 class="text-xl font-semibold text-gray-800 mb-4">编辑结果</h2>
+            <div id="resultsGrid" class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <!-- Results will be inserted here -->
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const dropZone = document.getElementById('dropZone');
+        const fileInput = document.getElementById('fileInput');
+        const previewImage = document.getElementById('previewImage');
+        const uploadPlaceholder = document.getElementById('uploadPlaceholder');
+        const promptInput = document.getElementById('prompt');
+        const submitBtn = document.getElementById('submitBtn');
+        const loadingState = document.getElementById('loadingState');
+        const errorState = document.getElementById('errorState');
+        const errorMessage = document.getElementById('errorMessage');
+        const resultsSection = document.getElementById('resultsSection');
+        const resultsGrid = document.getElementById('resultsGrid');
+
+        let currentImageBase64 = null;
+
+        // Drag and drop handlers
+        dropZone.addEventListener('click', () => fileInput.click());
+
+        dropZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropZone.classList.add('dragover');
+        });
+
+        dropZone.addEventListener('dragleave', () => {
+            dropZone.classList.remove('dragover');
+        });
+
+        dropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropZone.classList.remove('dragover');
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                handleFile(files[0]);
+            }
+        });
+
+        fileInput.addEventListener('change', (e) => {
+            if (e.target.files.length > 0) {
+                handleFile(e.target.files[0]);
+            }
+        });
+
+        const MAX_DIMENSION = 512;
+
+        function handleFile(file) {
+            if (!file.type.startsWith('image/')) {
+                showError('请上传图片文件');
+                return;
+            }
+
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const img = new Image();
+                img.onload = () => {
+                    // Resize image if needed
+                    const resizedDataUrl = resizeImage(img, MAX_DIMENSION);
+                    previewImage.src = resizedDataUrl;
+                    previewImage.classList.remove('hidden');
+                    uploadPlaceholder.classList.add('hidden');
+
+                    // Extract base64 data (remove data:image/xxx;base64, prefix)
+                    currentImageBase64 = resizedDataUrl.split(',')[1];
+                    updateSubmitButton();
+                };
+                img.src = e.target.result;
+            };
+            reader.readAsDataURL(file);
+        }
+
+        function resizeImage(img, maxDimension) {
+            let { width, height } = img;
+
+            // Check if resize is needed
+            if (width <= maxDimension && height <= maxDimension) {
+                // No resize needed, return original
+                const canvas = document.createElement('canvas');
+                canvas.width = width;
+                canvas.height = height;
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(img, 0, 0);
+                return canvas.toDataURL('image/png');
+            }
+
+            // Calculate new dimensions maintaining aspect ratio
+            if (width > height) {
+                height = Math.round((height * maxDimension) / width);
+                width = maxDimension;
+            } else {
+                width = Math.round((width * maxDimension) / height);
+                height = maxDimension;
+            }
+
+            // Create canvas and resize
+            const canvas = document.createElement('canvas');
+            canvas.width = width;
+            canvas.height = height;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(img, 0, 0, width, height);
+
+            return canvas.toDataURL('image/png');
+        }
+
+        promptInput.addEventListener('input', updateSubmitButton);
+
+        function updateSubmitButton() {
+            submitBtn.disabled = !currentImageBase64 || !promptInput.value.trim();
+        }
+
+        submitBtn.addEventListener('click', async () => {
+            if (!currentImageBase64 || !promptInput.value.trim()) return;
+
+            // Hide previous states
+            errorState.classList.add('hidden');
+            resultsSection.classList.add('hidden');
+            loadingState.classList.remove('hidden');
+            submitBtn.disabled = true;
+
+            try {
+                const response = await fetch('/api/imageedit/', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        image: currentImageBase64,
+                        prompt: promptInput.value.trim()
+                    })
+                });
+
+                const data = await response.json();
+
+                if (!data.success) {
+                    throw new Error(data.error || '未知错误');
+                }
+
+                // Display results
+                resultsGrid.innerHTML = '';
+                data.images.forEach((imgDataUrl, index) => {
+                    const div = document.createElement('div');
+                    div.className = 'bg-white rounded-lg shadow p-4';
+                    div.innerHTML = `
+                        <img src="${imgDataUrl}" alt="Result ${index + 1}" class="w-full rounded-lg mb-3">
+                        <a href="${imgDataUrl}" download="edited_image_${index + 1}.png"
+                           class="block text-center bg-gray-100 hover:bg-gray-200 text-gray-700 py-2 px-4 rounded-lg transition-colors">
+                            下载图片
+                        </a>
+                    `;
+                    resultsGrid.appendChild(div);
+                });
+
+                resultsSection.classList.remove('hidden');
+            } catch (error) {
+                showError(error.message);
+            } finally {
+                loadingState.classList.add('hidden');
+                updateSubmitButton();
+            }
+        });
+
+        function showError(message) {
+            errorMessage.textContent = message;
+            errorState.classList.remove('hidden');
+        }
+    </script>
+</body>
+</html>
