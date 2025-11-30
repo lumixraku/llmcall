@@ -3,12 +3,16 @@ name = "api_test"
 version = "0.1.0"
 description = "Testing various AI API integrations"
 readme = "README.md"
-requires-python = ">=3.9,<3.12"
+requires-python = ">=3.10,<3.12"
 dependencies = [
     "pillow>=10.0.0",
     "python-dotenv>=1.0.0",
     "google-genai>=1.52.0",
     "openai>=2.8.1",
+    "diffusers @ git+https://github.com/huggingface/diffusers",  # 从源码安装
+    "torch>=2.0.0",
+    "transformers>=4.36.0",
+    "accelerate>=0.25.0",
 ]
 
 [build-system]
