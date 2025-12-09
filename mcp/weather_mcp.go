@@ -18,16 +18,18 @@ import (
 
 // MCPToolManager 管理多个 MCP 服务器连接
 type MCPToolManager struct {
-	sessions map[string]*mcp.ClientSession
-	tools    map[string]*mcp.Tool // tool name -> tool definition
-	toolMap  map[string]string    // tool name -> session name
+	sessions  map[string]*mcp.ClientSession
+	tools     map[string]*mcp.Tool // tool name -> tool definition
+	toolMap   map[string]string    // tool name -> session name
+	endpoints map[string]string    // session name -> endpoint (用于重连)
 }
 
 func NewMCPToolManager() *MCPToolManager {
 	return &MCPToolManager{
-		sessions: make(map[string]*mcp.ClientSession),
-		tools:    make(map[string]*mcp.Tool),
-		toolMap:  make(map[string]string),
+		sessions:  make(map[string]*mcp.ClientSession),
+		tools:     make(map[string]*mcp.Tool),
+		toolMap:   make(map[string]string),
+		endpoints: make(map[string]string),
 	}
 }
 
@@ -44,21 +46,57 @@ func (m *MCPToolManager) ConnectToLocalServer(ctx context.Context, name string, 
 	return m.connectAndRegister(ctx, client, transport, name)
 }
 
-// ConnectToRemoteServer 连接到远程 MCP 服务器 (通过 SSE)
-// 示例: ConnectToRemoteServer(ctx, "deepwiki", "https://mcp.deepwiki.com/sse")
+// ConnectToRemoteServer 连接到远程 MCP 服务器 (通过 Streamable HTTP)
+// 示例: ConnectToRemoteServer(ctx, "deepwiki", "https://mcp.deepwiki.com/mcp")
 func (m *MCPToolManager) ConnectToRemoteServer(ctx context.Context, name string, endpoint string) error {
 	log.Printf("[MCP] 连接远程服务器: %s -> %s", name, endpoint)
+
+	// 保存端点用于后续重连
+	m.endpoints[name] = endpoint
 
 	client := mcp.NewClient(&mcp.Implementation{
 		Name:    "llmcall-client",
 		Version: "v1.0.0",
 	}, nil)
 
-	transport := &mcp.SSEClientTransport{
+	// 使用 Streamable HTTP 协议 (MCP 2025-03-26 版本)
+	transport := &mcp.StreamableClientTransport{
 		Endpoint: endpoint,
 	}
 
 	return m.connectAndRegister(ctx, client, transport, name)
+}
+
+// reconnect 重新连接到远程服务器
+func (m *MCPToolManager) reconnect(ctx context.Context, name string) error {
+	endpoint, ok := m.endpoints[name]
+	if !ok {
+		return fmt.Errorf("no endpoint for session %s", name)
+	}
+
+	log.Printf("[MCP] 重新连接: %s -> %s", name, endpoint)
+
+	// 关闭旧连接
+	if oldSession, exists := m.sessions[name]; exists {
+		oldSession.Close()
+	}
+
+	client := mcp.NewClient(&mcp.Implementation{
+		Name:    "llmcall-client",
+		Version: "v1.0.0",
+	}, nil)
+
+	transport := &mcp.StreamableClientTransport{
+		Endpoint: endpoint,
+	}
+
+	session, err := client.Connect(ctx, transport, nil)
+	if err != nil {
+		return err
+	}
+
+	m.sessions[name] = session
+	return nil
 }
 
 // connectAndRegister 通用的连接和注册工具逻辑
@@ -86,7 +124,7 @@ func (m *MCPToolManager) connectAndRegister(ctx context.Context, client *mcp.Cli
 	return nil
 }
 
-// CallTool 调用指定的 MCP 工具
+// CallTool 调用指定的 MCP 工具 (带自动重连)
 func (m *MCPToolManager) CallTool(ctx context.Context, toolName string, arguments map[string]any) (string, error) {
 	sessionName, ok := m.toolMap[toolName]
 	if !ok {
@@ -96,13 +134,9 @@ func (m *MCPToolManager) CallTool(ctx context.Context, toolName string, argument
 	argsJSON, _ := json.Marshal(arguments)
 	log.Printf("[MCP] 调用工具: %s (server=%s), 参数: %s", toolName, sessionName, string(argsJSON))
 
-	session := m.sessions[sessionName]
-	result, err := session.CallTool(ctx, &mcp.CallToolParams{
-		Name:      toolName,
-		Arguments: arguments,
-	})
+	// 尝试调用，失败则重连后重试一次
+	result, err := m.callToolWithRetry(ctx, sessionName, toolName, arguments)
 	if err != nil {
-		log.Printf("[MCP] 工具 %s 调用失败: %v", toolName, err)
 		return "", err
 	}
 
@@ -122,6 +156,40 @@ func (m *MCPToolManager) CallTool(ctx context.Context, toolName string, argument
 	output := fmt.Sprintf("%v", contents)
 	log.Printf("[MCP] 工具 %s 返回: %s", toolName, output)
 	return output, nil
+}
+
+// callToolWithRetry 调用工具，失败时重连并重试
+func (m *MCPToolManager) callToolWithRetry(ctx context.Context, sessionName, toolName string, arguments map[string]any) (*mcp.CallToolResult, error) {
+	session := m.sessions[sessionName]
+
+	result, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name:      toolName,
+		Arguments: arguments,
+	})
+
+	if err != nil {
+		log.Printf("[MCP] 工具 %s 调用失败: %v，尝试重连...", toolName, err)
+
+		// 重连
+		if reconnErr := m.reconnect(ctx, sessionName); reconnErr != nil {
+			log.Printf("[MCP] 重连失败: %v", reconnErr)
+			return nil, err // 返回原始错误
+		}
+
+		// 重试
+		session = m.sessions[sessionName]
+		result, err = session.CallTool(ctx, &mcp.CallToolParams{
+			Name:      toolName,
+			Arguments: arguments,
+		})
+
+		if err != nil {
+			log.Printf("[MCP] 重试后仍然失败: %v", err)
+			return nil, err
+		}
+	}
+
+	return result, nil
 }
 
 // ToOpenAITools 将 MCP 工具转换为 OpenAI 工具格式
@@ -203,12 +271,18 @@ func main() {
 
 	// ========== 连接远程 MCP 服务器 (DeepWiki) ==========
 	// DeepWiki 提供 GitHub 仓库文档搜索功能
+	// 使用 /mcp 端点 (Streamable HTTP 协议)，而不是 /sse (旧版 SSE 协议)
 	log.Println("正在连接 DeepWiki MCP 服务器...")
-	if err := mcpManager.ConnectToRemoteServer(ctx, "deepwiki", "https://mcp.deepwiki.com/sse"); err != nil {
+	if err := mcpManager.ConnectToRemoteServer(ctx, "deepwiki", "https://mcp.deepwiki.com/mcp"); err != nil {
 		log.Printf("警告: 无法连接 DeepWiki: %v", err)
 	}
 
 	log.Printf("MCP 工具管理器初始化完成，已注册 %d 个 MCP 工具", len(mcpManager.tools))
+
+	// 打印所有已注册的工具
+	for toolName := range mcpManager.tools {
+		log.Printf("  - 可用工具: %s", toolName)
+	}
 
 	// 创建 OpenAI 客户端
 	client := openai.NewClient(
