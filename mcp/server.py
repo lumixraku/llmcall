@@ -1,10 +1,16 @@
 import os
 import json
+from pathlib import Path
 from datetime import datetime
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
+from dotenv import load_dotenv
 from mcp.server.fastmcp import FastMCP
+
+
+_dotenv_path = Path(__file__).resolve().parents[1] / ".env"
+load_dotenv(dotenv_path=_dotenv_path, override=False)
 
 
 app = FastMCP("llmcall")
@@ -47,45 +53,22 @@ def _http_get_json(url: str, timeout_seconds: int = 20) -> dict:
 
 
 @app.tool()
-def get_weather(city: str) -> str:
-    if not city.strip():
-        raise ValueError("city cannot be empty")
+def get_ip_location() -> dict:
+    """Best-effort approximate location based on public IP (no API key).
 
-    geo_params = urlencode({"name": city, "count": 1, "language": "zh"})
-    geo_url = f"https://geocoding-api.open-meteo.com/v1/search?{geo_params}"
-    geo = _http_get_json(geo_url)
-    results = geo.get("results") or []
-    if not results:
-        return f"未找到城市：{city}"
+    Returns latitude/longitude and coarse address fields if available.
+    """
 
-    r0 = results[0]
-    lat = r0.get("latitude")
-    lon = r0.get("longitude")
-    resolved_name = r0.get("name") or city
-    country = r0.get("country") or ""
-    admin1 = r0.get("admin1") or ""
-
-    weather_params = urlencode(
-        {
-            "latitude": lat,
-            "longitude": lon,
-            "current": "temperature_2m,relative_humidity_2m,wind_speed_10m",
-        }
-    )
-    weather_url = f"https://api.open-meteo.com/v1/forecast?{weather_params}"
-    w = _http_get_json(weather_url)
-    current = w.get("current") or {}
-    temp = current.get("temperature_2m")
-    humidity = current.get("relative_humidity_2m")
-    wind = current.get("wind_speed_10m")
-    t = current.get("time")
-
-    location = ", ".join([x for x in [resolved_name, admin1, country] if x])
-    return (
-        f"{location} 当前天气（{t}）: "
-        f"气温 {temp}°C, 相对湿度 {humidity}%, 风速 {wind} km/h"
-    )
-
+    data = _http_get_json("https://ipapi.co/json/")
+    return {
+        "ip": data.get("ip"),
+        "latitude": data.get("latitude"),
+        "longitude": data.get("longitude"),
+        "city": data.get("city"),
+        "region": data.get("region"),
+        "country": data.get("country_name") or data.get("country"),
+        "raw": data,
+    }
 
 if __name__ == "__main__":
     app.run(transport="stdio")
