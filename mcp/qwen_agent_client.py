@@ -10,7 +10,7 @@ def main() -> None:
         "api_key": os.getenv("DASHSCOPE_API_KEY"),
     }
 
-    system = "你是一个助手，你可以通过 MCP 工具获取时间、回显文本。"
+    system = "你是一个助手，你可以通过 MCP 工具查询天气、获取时间、回显文本。"
 
     tools = [
         {
