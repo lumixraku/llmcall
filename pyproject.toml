@@ -9,7 +9,8 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "google-genai>=1.52.0",
     "openai>=2.8.1",
-    "diffusers @ git+https://github.com/huggingface/diffusers",  # 从源码安装
+    "qwen-agent[gui,mcp]",
+    "diffusers @ git+https://github.com/huggingface/diffusers", # 从源码安装
     "torch>=2.0.0",
     "transformers>=4.36.0",
     "accelerate>=0.25.0",
